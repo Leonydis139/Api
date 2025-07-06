@@ -1,41 +1,30 @@
 from fastapi import FastAPI, Request
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import List, Dict, Optional
-from fastapi.middleware.cors import CORSMiddleware
 
 app = FastAPI(title="QuantumRequest API Prototype")
 
+# ✅ Add CORS Middleware
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["https://api-wine-nu-87.vercel.app/"],  # You can replace "*" with your actual frontend URL for security
+    allow_origins=["*"],  # You can later change "*" to your actual frontend URL for better security
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-app = FastAPI(title="QuantumRequest API Prototype")
-
-# ✅ Models
+# ✅ Request Model
 class QuantumRequest(BaseModel):
     intent: str
     userId: int
     cacheKeys: Optional[List[str]] = []
     requestedComponents: List[str]
 
-class ComponentPayload(BaseModel):
-    profile: Optional[Dict] = None
-    permissions: Optional[Dict] = None
-    notifications: Optional[Dict] = None
-
-class QuantumResponse(BaseModel):
-    components: ComponentPayload
-    microFunctions: Dict[str, str]
-    nextIntents: List[str]
-
-# ✅ Mock Data
+# ✅ Component Data
 mock_user_profile = {
     "name": "Juan Greyling",
-    "email": "juanlouw.greyling@gmail.com",
+    "email": "juan@example.com",
     "lastLogin": "2025-07-04T12:00:00Z"
 }
 
@@ -51,6 +40,17 @@ micro_functions = {
     "formatDate": "function(date) { return new Date(date).toLocaleDateString(); }"
 }
 
+# ✅ Response Models
+class ComponentPayload(BaseModel):
+    profile: Optional[Dict] = None
+    permissions: Optional[Dict] = None
+    notifications: Optional[Dict] = None
+
+class QuantumResponse(BaseModel):
+    components: ComponentPayload
+    microFunctions: Dict[str, str]
+    nextIntents: List[str]
+
 # ✅ Component Fetcher
 def get_component(name: str, cache_keys: List[str]):
     if name == "profile" and "userProfile_v2" not in cache_keys:
@@ -61,11 +61,10 @@ def get_component(name: str, cache_keys: List[str]):
         return mock_user_notifications
     return None
 
-# ✅ API Endpoint
+# ✅ Main API Route
 @app.post("/quantum")
 async def quantum_request(qr: QuantumRequest):
     components = {}
-
     for comp in qr.requestedComponents:
         data = get_component(comp, qr.cacheKeys)
         if data:
