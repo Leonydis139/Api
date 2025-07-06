@@ -3,5 +3,4 @@ uvicorn
 pydantic
 python-dotenv
 slowapi
-psycopg2-binary
-SQLAlchemy
+libsql-client
