@@ -5,7 +5,15 @@ from typing import List, Dict, Optional
 import os
 
 app = FastAPI(title="QuantumRequest API")
+from fastapi.middleware.cors import CORSMiddleware
 
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # You can restrict to your Vercel frontend URL for security
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 API_KEY = os.getenv("QUANTUM_API_KEY")
 
 class QuantumRequest(BaseModel):
