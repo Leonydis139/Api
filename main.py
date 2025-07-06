@@ -1,78 +1,79 @@
 from fastapi import FastAPI, Request, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-from slowapi import Limiter
-from slowapi.util import get_remote_address
-from libsql_client import create_client
-from dotenv import load_dotenv
 import os
-import logging
-from datetime import datetime
+from libsql_client import create_client
 
-# Load environment variables
-load_dotenv()
-API_KEY = os.getenv("QUANTUM_API_KEY")
-DB_URL = os.getenv("TURSO_DATABASE_URL")
-DB_TOKEN = os.getenv("TURSO_AUTH_TOKEN")
-
-# Turso DB client
-client = create_client(url=DB_URL, auth_token=DB_TOKEN)
-
-# Create table if not exists
-client.execute("""
-CREATE TABLE IF NOT EXISTS quantum_requests (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    user_id INTEGER NOT NULL,
-    intent TEXT NOT NULL,
-    timestamp TEXT NOT NULL
-);
-""")
-
-# FastAPI app + Middleware
+# Initialize FastAPI
 app = FastAPI()
+
+# CORS - Replace with your frontend URL for production
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-limiter = Limiter(key_func=get_remote_address)
-app.state.limiter = limiter
+# Environment Variables
+API_KEY = os.getenv("QUANTUM_API_KEY")
+DB_URL = os.getenv("TURSO_DATABASE_URL")
+DB_TOKEN = os.getenv("TURSO_AUTH_TOKEN")
 
-# Logging setup
-logging.basicConfig(filename="quantum_api.log", level=logging.INFO, format="%(asctime)s - %(message)s")
+# Database Client
+client = create_client(url=DB_URL, auth_token=DB_TOKEN)
 
-# Request schema
+# Create Table if not exists
+client.execute("""
+CREATE TABLE IF NOT EXISTS quantum_requests (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    intent TEXT,
+    user_id INTEGER,
+    cache_keys TEXT,
+    requested_components TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+""")
+
+# Pydantic Schema
 class QuantumRequest(BaseModel):
     intent: str
     userId: int
     cacheKeys: list
     requestedComponents: list
 
+# Home
 @app.get("/")
-async def home():
-    return {"status": "QuantumRequest v3 with Turso 🚀"}
+async def root():
+    return {"status": "QuantumRequest API is live 🚀"}
 
+# Process Request and Store
 @app.post("/quantum")
-@limiter.limit("10/minute")
-async def quantum_endpoint(request: Request, data: QuantumRequest):
+async def quantum(request: Request, data: QuantumRequest):
     auth_header = request.headers.get("Authorization")
     if not auth_header or auth_header != f"Bearer {API_KEY}":
         raise HTTPException(status_code=401, detail="Unauthorized")
 
-    logging.info(f"Received Quantum intent '{data.intent}' from user {data.userId}")
-    
-    # Save to Turso
+    # Insert into Database
     client.execute(
-        "INSERT INTO quantum_requests (user_id, intent, timestamp) VALUES (?, ?, ?);",
-        [data.userId, data.intent, datetime.utcnow().isoformat()]
+        "INSERT INTO quantum_requests (intent, user_id, cache_keys, requested_components) VALUES (?, ?, ?, ?)",
+        [
+            data.intent,
+            data.userId,
+            ",".join(data.cacheKeys),
+            ",".join(data.requestedComponents)
+        ]
     )
 
     return {"message": "Quantum request processed ✅", "data": data.dict()}
 
-@app.get("/logs")
-async def fetch_logs():
-    result = client.execute("SELECT * FROM quantum_requests ORDER BY timestamp DESC LIMIT 10;")
-    return {"recent_logs": result["rows"]}
+# Retrieve Requests
+@app.get("/quantum/history")
+async def quantum_history(request: Request):
+    auth_header = request.headers.get("Authorization")
+    if not auth_header or auth_header != f"Bearer {API_KEY}":
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
+    rows = client.execute("SELECT id, intent, user_id, created_at FROM quantum_requests ORDER BY created_at DESC LIMIT 10").rows
+    return {"history": rows}
