@@ -1,6 +1,17 @@
 from fastapi import FastAPI, Request
 from pydantic import BaseModel
 from typing import List, Dict, Optional
+from fastapi.middleware.cors import CORSMiddleware
+
+app = FastAPI(title="QuantumRequest API Prototype")
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["https://api-wine-nu-87.vercel.app/"],  # You can replace "*" with your actual frontend URL for security
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 app = FastAPI(title="QuantumRequest API Prototype")
 
