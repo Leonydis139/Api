@@ -3,4 +3,5 @@ uvicorn
 pydantic
 python-dotenv
 slowapi
-sqlite-utils
+psycopg2-binary
+SQLAlchemy
