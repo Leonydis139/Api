@@ -1,6 +1,6 @@
 fastapi
 uvicorn
-pydantic
 python-dotenv
+pydantic
 slowapi
 libsql-client
