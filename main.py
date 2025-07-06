@@ -1,70 +1,84 @@
-
 from fastapi import FastAPI, Request, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
+from slowapi import Limiter
+from slowapi.util import get_remote_address
+from sqlalchemy import create_engine, Column, Integer, String, DateTime
+from sqlalchemy.ext.declarative import declarative_base
+from sqlalchemy.orm import sessionmaker
+from dotenv import load_dotenv
 import os
 import logging
+from datetime import datetime
 
-# Initialize logging
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger("QuantumRequestAPI")
+# Load .env
+load_dotenv()
+API_KEY = os.getenv("QUANTUM_API_KEY")
+DATABASE_URL = os.getenv("DATABASE_URL")
 
-app = FastAPI(
-    title="QuantumRequest API",
-    description="A simple secured QuantumRequest API",
-    version="2.0.0",
-)
+# Logging setup
+logging.basicConfig(filename="quantum_api.log", level=logging.INFO, format="%(asctime)s - %(message)s")
 
-# CORS Middleware (✅ Restrict origins in production)
+# SQLAlchemy setup
+engine = create_engine(DATABASE_URL)
+SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+Base = declarative_base()
+
+class RequestLog(Base):
+    __tablename__ = "request_logs"
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, nullable=False)
+    intent = Column(String, nullable=False)
+    timestamp = Column(DateTime, default=datetime.utcnow)
+
+Base.metadata.create_all(bind=engine)
+
+# FastAPI & Middleware
+app = FastAPI()
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # 👉 Change to ["https://your-frontend-domain.com"] in production
+    allow_origins=["*"],  
     allow_credentials=True,
-    allow_methods=["POST", "GET", "OPTIONS"],
+    allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# Load API Key from Environment Variable (✅ with fail-safe)
-API_KEY = os.getenv("QUANTUM_API_KEY")
-if not API_KEY:
-    logger.error("❌ QUANTUM_API_KEY not found in environment variables!")
-    raise RuntimeError("Missing QUANTUM_API_KEY environment variable.")
+limiter = Limiter(key_func=get_remote_address)
+app.state.limiter = limiter
 
-# Home route (✅ Improved message)
-@app.get("/")
-async def read_root():
-    return {
-        "status": "✅ QuantumRequest API is live",
-        "version": "2.0.0",
-        "documentation": "/docs"
-    }
-
-# Request schema
+# Request Schema
 class QuantumRequest(BaseModel):
     intent: str
     userId: int
     cacheKeys: list
     requestedComponents: list
 
-# Secure Quantum Endpoint
+@app.get("/")
+async def root():
+    return {"status": "QuantumRequest API + PostgreSQL 💾"}
+
 @app.post("/quantum")
+@limiter.limit("10/minute")
 async def quantum_endpoint(request: Request, data: QuantumRequest):
     auth_header = request.headers.get("Authorization")
-    expected_token = f"Bearer {API_KEY}"
+    if not auth_header or auth_header != f"Bearer {API_KEY}":
+        logging.warning(f"Unauthorized request from {get_remote_address(request)}")
+        raise HTTPException(status_code=401, detail="Unauthorized")
 
-    if not auth_header:
-        logger.warning("🚨 Missing Authorization header.")
-        raise HTTPException(status_code=401, detail="Missing Authorization header")
+    logging.info(f"Quantum request by user {data.userId} - intent: {data.intent}")
 
-    if auth_header != expected_token:
-        logger.warning("🚨 Invalid API Key provided.")
-        raise HTTPException(status_code=401, detail="Unauthorized access")
+    # Save to Postgres
+    db = SessionLocal()
+    log_entry = RequestLog(user_id=data.userId, intent=data.intent)
+    db.add(log_entry)
+    db.commit()
+    db.close()
 
-    logger.info(f"✅ Quantum request received: intent={data.intent}, userId={data.userId}")
+    return {"message": "Quantum request processed ✅", "data": data.dict()}
 
-    response = {
-        "message": "✅ Quantum request processed successfully",
-        "request": data.dict(),
-    }
-
-    return response
+@app.get("/logs")
+async def get_logs():
+    db = SessionLocal()
+    logs = db.query(RequestLog).order_by(RequestLog.timestamp.desc()).limit(10).all()
+    db.close()
+    return {"recent_requests": [{"id": log.id, "user_id": log.user_id, "intent": log.intent, "timestamp": log.timestamp} for log in logs]}
