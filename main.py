@@ -3,37 +3,32 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from slowapi import Limiter
 from slowapi.util import get_remote_address
-from sqlalchemy import create_engine, Column, Integer, String, DateTime
-from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy.orm import sessionmaker
+from libsql_client import create_client
 from dotenv import load_dotenv
 import os
 import logging
 from datetime import datetime
 
-# Load .env
+# Load environment variables
 load_dotenv()
 API_KEY = os.getenv("QUANTUM_API_KEY")
-DATABASE_URL = os.getenv("DATABASE_URL")
+DB_URL = os.getenv("TURSO_DATABASE_URL")
+DB_TOKEN = os.getenv("TURSO_AUTH_TOKEN")
 
-# Logging setup
-logging.basicConfig(filename="quantum_api.log", level=logging.INFO, format="%(asctime)s - %(message)s")
+# Turso DB client
+client = create_client(url=DB_URL, auth_token=DB_TOKEN)
 
-# SQLAlchemy setup
-engine = create_engine(DATABASE_URL)
-SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-Base = declarative_base()
+# Create table if not exists
+client.execute("""
+CREATE TABLE IF NOT EXISTS quantum_requests (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL,
+    intent TEXT NOT NULL,
+    timestamp TEXT NOT NULL
+);
+""")
 
-class RequestLog(Base):
-    __tablename__ = "request_logs"
-    id = Column(Integer, primary_key=True, index=True)
-    user_id = Column(Integer, nullable=False)
-    intent = Column(String, nullable=False)
-    timestamp = Column(DateTime, default=datetime.utcnow)
-
-Base.metadata.create_all(bind=engine)
-
-# FastAPI & Middleware
+# FastAPI app + Middleware
 app = FastAPI()
 app.add_middleware(
     CORSMiddleware,
@@ -46,7 +41,10 @@ app.add_middleware(
 limiter = Limiter(key_func=get_remote_address)
 app.state.limiter = limiter
 
-# Request Schema
+# Logging setup
+logging.basicConfig(filename="quantum_api.log", level=logging.INFO, format="%(asctime)s - %(message)s")
+
+# Request schema
 class QuantumRequest(BaseModel):
     intent: str
     userId: int
@@ -54,31 +52,27 @@ class QuantumRequest(BaseModel):
     requestedComponents: list
 
 @app.get("/")
-async def root():
-    return {"status": "QuantumRequest API + PostgreSQL 💾"}
+async def home():
+    return {"status": "QuantumRequest v3 with Turso 🚀"}
 
 @app.post("/quantum")
 @limiter.limit("10/minute")
 async def quantum_endpoint(request: Request, data: QuantumRequest):
     auth_header = request.headers.get("Authorization")
     if not auth_header or auth_header != f"Bearer {API_KEY}":
-        logging.warning(f"Unauthorized request from {get_remote_address(request)}")
         raise HTTPException(status_code=401, detail="Unauthorized")
 
-    logging.info(f"Quantum request by user {data.userId} - intent: {data.intent}")
-
-    # Save to Postgres
-    db = SessionLocal()
-    log_entry = RequestLog(user_id=data.userId, intent=data.intent)
-    db.add(log_entry)
-    db.commit()
-    db.close()
+    logging.info(f"Received Quantum intent '{data.intent}' from user {data.userId}")
+    
+    # Save to Turso
+    client.execute(
+        "INSERT INTO quantum_requests (user_id, intent, timestamp) VALUES (?, ?, ?);",
+        [data.userId, data.intent, datetime.utcnow().isoformat()]
+    )
 
     return {"message": "Quantum request processed ✅", "data": data.dict()}
 
 @app.get("/logs")
-async def get_logs():
-    db = SessionLocal()
-    logs = db.query(RequestLog).order_by(RequestLog.timestamp.desc()).limit(10).all()
-    db.close()
-    return {"recent_requests": [{"id": log.id, "user_id": log.user_id, "intent": log.intent, "timestamp": log.timestamp} for log in logs]}
+async def fetch_logs():
+    result = client.execute("SELECT * FROM quantum_requests ORDER BY timestamp DESC LIMIT 10;")
+    return {"recent_logs": result["rows"]}
